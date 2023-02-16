@@ -60,46 +60,48 @@ export const resolved_trigger = SQL.create()
   .build()
 
 export const process_complete = View.create('process_complete')
-    .field('id', z_uuid(), { primaryKey: true })
-    .field('type', z.string())
-    .field('data', z.string().nullable())
-    .field('inputs', z.record(z.string(), z_uuid()))
-    .field('resolved', z.boolean())
-    .field('output', z_uuid().nullable())
-    .sql(`
-      select
-        "process"."id",
-        "process"."type",
-        "process"."data",
-        coalesce(
-          (select jsonb_object_agg("process_input"."key", "process_input"."value")
-           from "process_input"
-           where process."id" = "process_input"."id"),
-          '{}'::jsonb
-        ) as "inputs",
-        ("resolved"."id" is not null) as "resolved",
-        "resolved"."data" as "output"
-      from "process"
-      left join "resolved" on "process"."id" = "resolved"."id";
-    `)
-    .js(async (db: any) => await Promise.all((await db.objects.process.findMany()).map(async ({ id, type, data }: any) => {
-      const resolved = await db.objects.resolved.findUnique({ where: { id } })
-      const inputs = dict.init(await db.objects.process_input.findMany({ where: { id } }))
-      return {
-        id,
-        type,
-        data,
-        inputs,
-        resolved: resolved !== null,
-        output: resolved !== null ? resolved.data : null,
-      }
-    })))
-    .build()
+  .field('id', z_uuid(), { primaryKey: true })
+  .field('type', z.string())
+  .field('data', z.string().nullable())
+  .field('inputs', z.record(z.string(), z_uuid()))
+  .field('resolved', z.boolean())
+  .field('output', z_uuid().nullable())
+  .sql(`
+    select
+      "process"."id",
+      "process"."type",
+      "process"."data",
+      coalesce(
+        (select jsonb_object_agg("process_input"."key", "process_input"."value")
+          from "process_input"
+          where process."id" = "process_input"."id"),
+        '{}'::jsonb
+      ) as "inputs",
+      ("resolved"."id" is not null) as "resolved",
+      "resolved"."data" as "output"
+    from "process"
+    left join "resolved" on "process"."id" = "resolved"."id";
+  `)
+  .js(async (db: any) => await Promise.all((await db.objects.process.findMany()).map(async ({ id, type, data }: any) => {
+    const resolved = await db.objects.resolved.findUnique({ where: { id } })
+    const inputs = dict.init(await db.objects.process_input.findMany({ where: { id } }))
+    return {
+      id,
+      type,
+      data,
+      inputs,
+      resolved: resolved !== null,
+      output: resolved !== null ? resolved.data : null,
+    }
+  })))
+  .build()
 
 export const fpl = Table.create('fpl')
   .field('id', 'uuid', '', z_uuid(), { primaryKey: true })
   .field('process', 'uuid', 'not null references process ("id") on delete cascade', z_uuid())
   .field('parent', 'uuid', 'references fpl ("id") on delete cascade', z_uuid().nullable())
+  .field('playbook', 'uuid', 'references playbook ("id") on delete cascade default null', z_uuid().nullable())
+  .field('metadata', 'jsonb', 'default null', z.object({ hidden: z.boolean(), }).nullable(), { default: () => null })
   .field('created', 'timestamp', 'not null default now()', z.date(), { default: () => new Date() })
   .build()
 
