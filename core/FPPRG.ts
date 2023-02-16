@@ -118,14 +118,27 @@ export class Resolved {
  */
 export class FPL {
   id: string
-  constructor(public process: Process, public parent: FPL | undefined = undefined, public persisted = false) {
-    this.id = uuid([process.id, parent ? parent.id : null])
+  constructor(
+    public process: Process,
+    public parent?: FPL,
+    public playbook?: string,
+    public metadata?: object,
+    public persisted = false,
+  ) {
+    this.id = uuid([
+      process.id,
+      ...(parent ? [parent.id] : []),
+      ...(playbook ? [playbook] : []),
+      ...(metadata ? [metadata] : []),
+    ])
   }
 
   toJSONWithOutput = async () => {
     return {
       id: this.id,
       process: await this.process.toJSONWithOutput(),
+      'playbook': this.playbook ? this.playbook : null,
+      'metadata': this.metadata ? this.metadata : null,
     }
   }
 
@@ -133,6 +146,8 @@ export class FPL {
     return {
       'id': this.id,
       'process': this.process.toJSON(),
+      'playbook': this.playbook ? this.playbook : null,
+      'metadata': this.metadata ? this.metadata : null,
     }
   }
 
@@ -168,8 +183,35 @@ export class FPL {
    * Extend an LPL with a new process
    */
   extend = (process: Process) => {
-    return new FPL(process, this)
+    return new FPL(process, this, this.playbook)
   }
+
+  /**
+   * Add the playbook association to all steps of the FPL
+   */
+  asPlaybook = (playbook: string) => {
+    const fpl = [] as FPL[]
+    let head: FPL | undefined
+    for (const el of this.resolve()) {
+      head = new FPL(el.process, head, playbook, el.metadata)
+      fpl.push(head)
+    }
+    return fpl
+  }
+
+  /**
+   * Rebase the metadata on an FPL
+   */
+  rebaseMetadata = (node_id: string, metadata?: object) => {
+    const fpl = [] as FPL[]
+    let head: FPL | undefined
+    for (const el of this.resolve()) {
+      head = new FPL(el.process, head, el.playbook, el.id === node_id ? metadata : el.metadata)
+      fpl.push(head)
+    }
+    return fpl
+  }
+
   /**
    * Rebase an LPL, this must deal with invalidated processes
    */
@@ -187,25 +229,26 @@ export class FPL {
       throw new Error(`${old_process} not found in FPL`)
     }
     // Replace old_process with new process
-    const update = { [head.process.id]: new_process }
+    const update: Record<string, { new_process: Process, old_head: FPL }> = { [head.process.id]: { new_process, old_head: head } }
     // Walk forward updating processes, replacing any dependencies with the updated one
-    head = new FPL(new_process, head.parent)
+    head = new FPL(new_process, head.parent, head.playbook, head.metadata)
     const rebased = head
     fpl.pop()
     fpl.reverse()
     for (const el of fpl) {
-      const new_proc = new Process(
-        (update[el.process.id] || el.process).type,
-        (update[el.process.id] || el.process).data,
+      const to_update = (update[el.process.id] || { new_process: el.process, old_head: head }) as { new_process: Process, old_head: FPL}
+      const new_process = new Process(
+        to_update.new_process.type,
+        to_update.new_process.data,
         dict.init(
           dict.sortedItems(el.process.inputs).map(({ key, value }) =>
-            ({ key, value: update[value.id] || value })
+            ({ key, value: (update[value.id] || { new_process: value }).new_process })
           )
         ),
         el.process.db,
       )
-      head = new FPL(new_proc, head)
-      update[el.process.id] = new_proc
+      head = new FPL(new_process, head, to_update.old_head.playbook, to_update.old_head.metadata)
+      update[el.process.id] = { new_process, old_head: to_update.old_head }
     }
     return { rebased, head }
   }
@@ -487,6 +530,8 @@ export default class FPPRG {
         this.fplTable[result.id] = new FPL(
           (await this.getProcess(result.process)) as Process,
           result.parent !== null ? (await this.getFPL(result.parent)) as FPL : undefined,
+          undefined,
+          undefined,
           true,
         )
       }
